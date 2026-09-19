@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { advanceDay, GameRuleError, previewPlan, publicGameState } from './engine.js';
+import { applyPriorityOverride, computePriorityQueue, revokePriorityOverride } from './priority.js';
 import { assertPlanningPhase } from './store.js';
 
 function getAssignments(body) {
@@ -75,6 +76,34 @@ export function createApp({ store, clientDist }) {
       : String(requestedSeed);
     const state = store.reset(seed);
     response.json({ state: publicGameState(state) });
+  });
+
+  // 分拣优先级：只读计算，同一存档状态必然返回同一队列。
+  app.get('/api/game/priority', (request, response) => {
+    response.json({ priority: computePriorityQueue(store.getState()) });
+  });
+
+  // 人工覆盖只调整软优先级分，硬规则校验在引擎内强制执行。
+  app.post('/api/game/priority/overrides', (request, response) => {
+    const event = store.mutate((state) => {
+      assertPlanningPhase(state);
+      return applyPriorityOverride(state, request.body);
+    });
+    response.status(201).json({
+      override: event,
+      priority: computePriorityQueue(store.getState())
+    });
+  });
+
+  app.delete('/api/game/priority/overrides/:overrideId', (request, response) => {
+    const event = store.mutate((state) => {
+      assertPlanningPhase(state);
+      return revokePriorityOverride(state, { overrideId: request.params.overrideId });
+    });
+    response.json({
+      revoked: event,
+      priority: computePriorityQueue(store.getState())
+    });
   });
 
   app.use('/api', (request, response) => {

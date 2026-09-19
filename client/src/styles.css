@@ -1638,3 +1638,74 @@ code {
     padding: 30px 20px;
   }
 }
+
+/* 分拣优先级引擎 */
+.letter-topline {
+  gap: 8px;
+}
+
+.letter-actions {
+  flex-wrap: wrap;
+}
+
+.inbox-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.suggest-button {
+  padding: 7px 12px;
+  border: 1px solid rgba(84, 215, 232, 0.4);
+  border-radius: 8px;
+  color: var(--cyan);
+  background: rgba(84, 215, 232, 0.08);
+  font-size: 11px;
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.suggest-button:hover {
+  background: rgba(84, 215, 232, 0.16);
+  transform: translateY(-1px);
+}
+
+.priority-score {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: help;
+}
+
+.infeasible-tag {
+  margin-top: 8px;
+  color: var(--red);
+  font-size: 10px;
+}
+
+.override-tag {
+  margin-top: 8px;
+  color: var(--amber);
+  font-size: 10px;
+}
+
+.override-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.override-controls button {
+  padding: 6px 8px;
+  border: 1px dashed rgba(255, 198, 92, 0.35);
+  border-radius: 8px;
+  color: var(--amber);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.override-controls button:hover {
+  border-color: rgba(255, 198, 92, 0.7);
+  background: rgba(255, 198, 92, 0.08);
+}

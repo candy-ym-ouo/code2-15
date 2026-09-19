@@ -11,6 +11,7 @@ function App() {
   const [game, setGame] = useState(null);
   const [assignments, setAssignments] = useState([]);
   const [previewState, setPreviewState] = useState(null);
+  const [priority, setPriority] = useState(null);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -30,6 +31,22 @@ function App() {
       .finally(() => active && setLoading(false));
     return () => { active = false; };
   }, []);
+
+  const gameSeed = game?.seed;
+  const gameDay = game?.day;
+  const gamePhase = game?.phase;
+
+  useEffect(() => {
+    if (!gameSeed || gamePhase !== 'planning') {
+      setPriority(null);
+      return undefined;
+    }
+    let active = true;
+    gameApi.getPriority()
+      .then(({ priority: nextPriority }) => active && setPriority(nextPriority))
+      .catch(() => active && setPriority(null));
+    return () => { active = false; };
+  }, [gameSeed, gameDay, gamePhase]);
 
   const assignmentsKey = useMemo(() => JSON.stringify(assignments), [assignments]);
   const previewKey = game
@@ -66,16 +83,33 @@ function App() {
     };
   }, [assignments, game, previewKey]);
 
+  // 仅当优先级数据与当前对局匹配（同种子同日）时才采用，避免结算间隙的旧数据闪烁。
+  const priorityData = priority && game && priority.seed === game.seed && priority.day === game.day
+    ? priority
+    : null;
+
+  const priorityByLetter = useMemo(() => {
+    const map = new Map();
+    for (const entry of priorityData?.queue ?? []) map.set(entry.letterId, entry);
+    return map;
+  }, [priorityData]);
+
+  const exceptionByLetter = useMemo(() => {
+    const map = new Map();
+    for (const item of priorityData?.exceptions ?? []) map.set(item.letterId, item);
+    return map;
+  }, [priorityData]);
+
   const openLetters = useMemo(() => {
     if (!game) return [];
     return game.letters
       .filter((letter) => letter.status === 'inbox' || letter.status === 'backlog')
-      .sort((first, second) => (
-        second.urgency - first.urgency ||
-        first.deadlineDay - second.deadlineDay ||
-        first.deadlineHour - second.deadlineHour
-      ));
-  }, [game]);
+      .sort((first, second) => {
+        const firstRank = priorityByLetter.get(first.id)?.rank ?? Number.MAX_SAFE_INTEGER;
+        const secondRank = priorityByLetter.get(second.id)?.rank ?? Number.MAX_SAFE_INTEGER;
+        return firstRank - secondRank || (first.id < second.id ? -1 : first.id > second.id ? 1 : 0);
+      });
+  }, [game, priorityByLetter]);
 
   const assignedIds = useMemo(() => new Set(assignments.map((assignment) => assignment.letterId)), [assignments]);
   const unassignedLetters = openLetters.filter((letter) => !assignedIds.has(letter.id));
@@ -125,6 +159,37 @@ function App() {
         return assignment;
       });
     });
+  }
+
+  async function applyOverride(letter, delta) {
+    setError('');
+    try {
+      const { priority: nextPriority } = await gameApi.applyOverride(
+        letter.id,
+        delta,
+        delta > 0 ? '调度员手动提升优先级' : '调度员手动降低优先级'
+      );
+      setPriority(nextPriority);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  async function revokeOverride(overrideId) {
+    setError('');
+    try {
+      const { priority: nextPriority } = await gameApi.revokeOverride(overrideId);
+      setPriority(nextPriority);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  function loadSuggestion() {
+    const suggested = priorityData?.suggestion?.assignments ?? [];
+    if (suggested.length === 0) return;
+    if (assignments.length > 0 && !window.confirm('按引擎建议重新装载会替换当前方案，继续吗？')) return;
+    setAssignments(suggested.map((assignment) => ({ ...assignment })));
   }
 
   async function advanceDay() {
@@ -254,7 +319,14 @@ function App() {
                 <p className="eyebrow">待处理电报</p>
                 <h2 id="inbox-title">今日邮件 <b>{openLetters.length}</b></h2>
               </div>
-              <span className="inbox-progress">{deliveredCount} 封已装载</span>
+              <div className="inbox-heading-actions">
+                {(priorityData?.suggestion?.assignments?.length ?? 0) > 0 && (
+                  <button type="button" className="suggest-button" disabled={busy} onClick={loadSuggestion}>
+                    按建议装载 {priorityData.suggestion.assignments.length} 封
+                  </button>
+                )}
+                <span className="inbox-progress">{deliveredCount} 封已装载</span>
+              </div>
             </div>
 
             <div className="inbox-list">
@@ -264,19 +336,38 @@ function App() {
                   <h3>所有邮件都已装载</h3>
                   <p>检查下方航线并执行当日调度。</p>
                 </div>
-              ) : unassignedLetters.map((letter) => (
-                <LetterCard key={letter.id} letter={letter} islands={game.islands}>
-                  {letter.status === 'backlog' && <span className="backlog-tag">已积压 {Math.max(0, game.day - letter.day)} 日</span>}
-                  <div className="assign-buttons">
-                    {game.couriers.map((courier) => (
-                      <button key={courier.id} type="button" disabled={busy} onClick={() => assignLetter(letter, courier.id)}>
-                        <i style={{ background: courier.color }} />
-                        {courier.name}
-                      </button>
-                    ))}
-                  </div>
-                </LetterCard>
-              ))}
+              ) : unassignedLetters.map((letter) => {
+                const priorityEntry = priorityByLetter.get(letter.id) ?? null;
+                const exception = exceptionByLetter.get(letter.id) ?? null;
+                return (
+                  <LetterCard key={letter.id} letter={letter} islands={game.islands} priorityEntry={priorityEntry}>
+                    {letter.status === 'backlog' && <span className="backlog-tag">已积压 {Math.max(0, game.day - letter.day)} 日</span>}
+                    {exception && <span className="infeasible-tag">⚠ {exception.message}</span>}
+                    {priorityEntry && (
+                      <div className="override-controls">
+                        {priorityEntry.overridden ? (
+                          <button type="button" disabled={busy} onClick={() => revokeOverride(priorityEntry.overrideId)}>
+                            撤销人工覆盖
+                          </button>
+                        ) : (
+                          <>
+                            <button type="button" disabled={busy} onClick={() => applyOverride(letter, 300)}>▲ 优先</button>
+                            <button type="button" disabled={busy} onClick={() => applyOverride(letter, -300)}>▼ 靠后</button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <div className="assign-buttons">
+                      {game.couriers.map((courier) => (
+                        <button key={courier.id} type="button" disabled={busy} onClick={() => assignLetter(letter, courier.id)}>
+                          <i style={{ background: courier.color }} />
+                          {courier.name}
+                        </button>
+                      ))}
+                    </div>
+                  </LetterCard>
+                );
+              })}
             </div>
           </section>
 

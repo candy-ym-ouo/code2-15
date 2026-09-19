@@ -60,6 +60,18 @@ function hasValidEnding(ending) {
   );
 }
 
+function hasValidOverrideLog(events) {
+  if (!Array.isArray(events)) return false;
+  return events.every((event) => {
+    if (!isPlainObject(event)) return false;
+    if (typeof event.id !== 'string' || !Number.isInteger(event.day) || !Number.isInteger(event.seq)) return false;
+    if (typeof event.letterId !== 'string' || typeof event.reason !== 'string') return false;
+    if (event.action === 'apply') return Number.isInteger(event.delta);
+    if (event.action === 'revoke') return typeof event.targetId === 'string';
+    return false;
+  });
+}
+
 function hasValidStateShape(state) {
   if (!isPlainObject(state)) return false;
   if (state.version !== GAME_VERSION) return false;
@@ -73,6 +85,7 @@ function hasValidStateShape(state) {
   if (!Number.isInteger(state.revision) || state.revision < 0) return false;
   if (!Array.isArray(state.islands) || !Array.isArray(state.couriers)) return false;
   if (!Array.isArray(state.letters) || !Array.isArray(state.history)) return false;
+  if (!hasValidOverrideLog(state.priorityOverrides)) return false;
   if (!isPlainObject(state.wind) || !isPlainObject(state.relations)) return false;
   if (!hasValidReport(state.lastReport)) return false;
   if (!hasValidEnding(state.ending)) return false;
@@ -146,6 +159,11 @@ function normalizeStoredState(parsed) {
   let changed = false;
   if (!Number.isInteger(parsed.revision)) {
     parsed.revision = 0;
+    changed = true;
+  }
+  // 旧存档没有覆盖事件日志：迁移为空日志，而不是按损坏存档重置。
+  if (!Array.isArray(parsed.priorityOverrides)) {
+    parsed.priorityOverrides = [];
     changed = true;
   }
   if (Number.isFinite(parsed.reputation)) {

@@ -256,6 +256,7 @@ export function createInitialState({ seed = Date.now(), days = 14 } = {}) {
     couriers: structuredClone(COURIERS),
     relations: buildInitialRelations(),
     letters,
+    priorityOverrides: [],
     history: [],
     lastReport: null,
     ending: null,
@@ -355,6 +356,31 @@ function distanceBetween(first, second) {
   return Math.hypot(first.position.x - second.position.x, first.position.y - second.position.y) * 2.2;
 }
 
+// 单航段飞行模型：calculateRoute 与分拣优先级引擎共用，避免两套航速公式漂移。
+export function computeLeg(state, courier, fromIsland, toIsland, totalWeight, departHour) {
+  const loadRatio = totalWeight / courier.capacity;
+  const legDistance = distanceBetween(fromIsland, toIsland);
+  const bearing = Math.atan2(toIsland.position.y - fromIsland.position.y, toIsland.position.x - fromIsland.position.x) * 180 / Math.PI;
+  const angleDifference = (bearing - state.wind.angle) * Math.PI / 180;
+  const alignment = Math.cos(angleDifference);
+  const windBoost = state.wind.strength * alignment * 0.78;
+  let speed = courier.baseSpeed * (1 - 0.34 * loadRatio) + windBoost;
+  if (toIsland.id === 'gale') speed *= 0.88;
+  speed = clamp(speed, 24, 118);
+
+  const weatherDelay = (toIsland.id === 'mist' ? 0.35 : 0) + (toIsland.id === 'sun' && departHour < 9 ? 0.25 : 0);
+  const legHours = legDistance / speed + weatherDelay;
+
+  return {
+    arrivalHour: round(departHour + legHours, 2),
+    legDistance,
+    legHours,
+    effectiveSpeed: speed,
+    windAlignment: alignment,
+    weatherDelay
+  };
+}
+
 export function calculateRoute(state, courierId, routeAssignments = []) {
   const courier = getCourier(state, courierId);
   if (!courier) {
@@ -363,26 +389,15 @@ export function calculateRoute(state, courierId, routeAssignments = []) {
 
   const sorted = [...routeAssignments].sort((first, second) => first.order - second.order);
   const totalWeight = round(sorted.reduce((sum, item) => sum + item.letter.weight, 0), 1);
-  const loadRatio = totalWeight / courier.capacity;
   let current = getIsland(state, HUB_ID);
   let hour = 7;
   let distance = 0;
 
   const letters = sorted.map((assignment) => {
     const target = getIsland(state, assignment.targetIslandId);
-    const legDistance = distanceBetween(current, target);
-    const bearing = Math.atan2(target.position.y - current.position.y, target.position.x - current.position.x) * 180 / Math.PI;
-    const angleDifference = (bearing - state.wind.angle) * Math.PI / 180;
-    const alignment = Math.cos(angleDifference);
-    const windBoost = state.wind.strength * alignment * 0.78;
-    let speed = courier.baseSpeed * (1 - 0.34 * loadRatio) + windBoost;
-    if (target.id === 'gale') speed *= 0.88;
-    speed = clamp(speed, 24, 118);
-
-    const weatherDelay = (target.id === 'mist' ? 0.35 : 0) + (target.id === 'sun' && hour < 9 ? 0.25 : 0);
-    const legHours = legDistance / speed + weatherDelay;
-    hour = round(hour + legHours, 2);
-    distance = round(distance + legDistance, 1);
+    const leg = computeLeg(state, courier, current, target, totalWeight, hour);
+    hour = leg.arrivalHour;
+    distance = round(distance + leg.legDistance, 1);
 
     const late = state.day > assignment.letter.deadlineDay || hour > assignment.letter.deadlineHour;
     const wrong = assignment.targetIslandId !== assignment.letter.recipientIslandId;
@@ -397,9 +412,9 @@ export function calculateRoute(state, courierId, routeAssignments = []) {
       order: assignment.order,
       weight: assignment.letter.weight,
       urgency: assignment.letter.urgency,
-      legDistance: round(legDistance, 1),
-      effectiveSpeed: round(speed, 1),
-      windAlignment: round(alignment, 2),
+      legDistance: round(leg.legDistance, 1),
+      effectiveSpeed: round(leg.effectiveSpeed, 1),
+      windAlignment: round(leg.windAlignment, 2),
       arrivalHour: hour,
       outcome,
       late,

@@ -16,6 +16,14 @@ async function request(path, options = {}) {
 
 export const gameApi = {
   getState: () => request('/api/game'),
+  getPriority: () => request('/api/game/priority'),
+  applyOverride: (letterId, delta, reason) => request('/api/game/priority/overrides', {
+    method: 'POST',
+    body: JSON.stringify({ letterId, delta, reason })
+  }),
+  revokeOverride: (overrideId) => request(`/api/game/priority/overrides/${encodeURIComponent(overrideId)}`, {
+    method: 'DELETE'
+  }),
   preview: (assignments) => request('/api/game/plan/preview', {
     method: 'POST',
     body: JSON.stringify({ assignments })
