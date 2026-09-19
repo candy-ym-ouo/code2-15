@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { GameRuleError, createInitialState, GAME_VERSION } from './engine.js';
+import { sanitizeLedger } from './priority.js';
 
 const VALID_PHASES = new Set(['planning', 'completed', 'failed']);
 
@@ -73,6 +74,14 @@ function hasValidStateShape(state) {
   if (!Number.isInteger(state.revision) || state.revision < 0) return false;
   if (!Array.isArray(state.islands) || !Array.isArray(state.couriers)) return false;
   if (!Array.isArray(state.letters) || !Array.isArray(state.history)) return false;
+  if (state.priorityLedger !== undefined && !Array.isArray(state.priorityLedger)) return false;
+  if (Array.isArray(state.priorityLedger) && !state.priorityLedger.every((event) => (
+    event &&
+    typeof event.id === 'string' &&
+    (event.kind === 'apply' || event.kind === 'revoke') &&
+    typeof event.letterId === 'string' &&
+    typeof event.action === 'string'
+  ))) return false;
   if (!isPlainObject(state.wind) || !isPlainObject(state.relations)) return false;
   if (!hasValidReport(state.lastReport)) return false;
   if (!hasValidEnding(state.ending)) return false;
@@ -167,6 +176,13 @@ function normalizeStoredState(parsed) {
         parsed.relations[key] = relation;
         changed = true;
       }
+    }
+  }
+  if (Array.isArray(parsed.priorityLedger)) {
+    const sanitized = sanitizeLedger(parsed.priorityLedger);
+    if (sanitized.length !== parsed.priorityLedger.length) {
+      parsed.priorityLedger = sanitized;
+      changed = true;
     }
   }
   return { state: parsed, changed };

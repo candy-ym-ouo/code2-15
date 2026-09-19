@@ -3,6 +3,11 @@ import path from 'node:path';
 import express from 'express';
 import { advanceDay, GameRuleError, previewPlan, publicGameState } from './engine.js';
 import { assertPlanningPhase } from './store.js';
+import {
+  applyOverrideToState,
+  getPrioritySnapshot,
+  revokeOverrideInState
+} from './priorityService.js';
 
 function getAssignments(body) {
   if (body === undefined || body === null) {
@@ -75,6 +80,38 @@ export function createApp({ store, clientDist }) {
       : String(requestedSeed);
     const state = store.reset(seed);
     response.json({ state: publicGameState(state) });
+  });
+
+  app.get('/api/game/sort-plan', (request, response) => {
+    const state = store.getState();
+    assertPlanningPhase(state);
+    response.json(getPrioritySnapshot(state));
+  });
+
+  app.post('/api/game/overrides', (request, response) => {
+    const result = store.mutate((state) => {
+      assertPlanningPhase(state);
+      return applyOverrideToState(state, request.body);
+    });
+    response.json({
+      event: result.event,
+      ledger: result.ledger,
+      snapshot: getPrioritySnapshot(store.getState()),
+      state: publicGameState(store.getState())
+    });
+  });
+
+  app.post('/api/game/overrides/revoke', (request, response) => {
+    const result = store.mutate((state) => {
+      assertPlanningPhase(state);
+      return revokeOverrideInState(state, request.body);
+    });
+    response.json({
+      event: result.event,
+      ledger: result.ledger,
+      snapshot: getPrioritySnapshot(store.getState()),
+      state: publicGameState(store.getState())
+    });
   });
 
   app.use('/api', (request, response) => {
